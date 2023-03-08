@@ -1,82 +1,114 @@
-from PyQt5.QtWidgets import QWidget, QApplication, QVBoxLayout
-from PyQt5.QtCore import QTimer
 import sys
-import gui
 import time
 
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
-from matplotlib.figure import Figure
-
 import numpy as np
-        
 
-class MainWidget(QWidget, gui.Ui_MainWindow):
+from matplotlib.backends.qt_compat import QtWidgets
+from matplotlib.backends.backend_qtagg import (
+    FigureCanvas, NavigationToolbar2QT as NavigationToolbar)
+from matplotlib.figure import Figure
+import matplotlib.pyplot as plt
+
+from scipy import signal
+from scipy.fft import fftshift
+
+
+class ApplicationWindow(QtWidgets.QMainWindow):
     def __init__(self):
-        super(MainWidget, self).__init__()
-        self.setupUi(self)
-
-        self.layout = QVBoxLayout(self)
-        self.spectra = self.layout.addWidget(SpectraWidget())
-
-
-class MatplotlibWidget(QWidget):
-    def __init__(self, parent=None):
-        super(MatplotlibWidget, self).__init__(parent)
-        self.figure = Figure()
-        self.canvas = FigureCanvasQTAgg(self.figure)
-
-        ax = self.figure.add_gridspec(2,1)
-        self.wave_axis = self.figure.add_subplot(ax[0,0])
-        self.axis = self.figure.add_subplot(ax[1,0])
-        self.figure.subplots_adjust(bottom=0.1, right=0.5, top=0.9)
-        self.layoutvertical = QVBoxLayout(self)
-        self.layoutvertical.addWidget(self.canvas)
-
-class SpectraWidget(QWidget):
-    def __init__(self):
-        super(SpectraWidget, self).__init__()
-        #self.setupUi(self)
-        self.setStyleSheet("background-color: green;")
-        self.init_widget()
-        self.plot_widget()
-        self.timer = QTimer()
-        self.timer.setInterval(100)
-        self.timer.timeout.connect(self.timerEvent)
-        self.timer.start()
+        super().__init__()
         
-
-    def init_widget(self):
-        self.matplotlibwidget = MatplotlibWidget()
-        self.matplotlibwidget.axis.set_axis_off()
-        self.layoutvertical = QVBoxLayout(self)
-        self.layoutvertical.addWidget(self.matplotlibwidget)
-
-    def timerEvent(self):
-        self.Z = np.sin(time.time() + self.Y) * np.sin(self.X)
-        self.cax.set_data(self.Z)
-        self.z = np.sin(time.time()) * np.sin(self.x)
-        self.matplotlibwidget.wave_axis.clear()
-        self.matplotlibwidget.wave_axis.plot(self.x,self.z)
-        self.matplotlibwidget.wave_axis.plot(1)
-        self.matplotlibwidget.wave_axis.plot(-1)
-        self.matplotlibwidget.canvas.draw()
-
-    def plot_widget(self):
-        self.matplotlibwidget.axis.clear()
-        self.x = np.linspace(0, 20, 20)
-        self.y = np.linspace(0, 6, 60)
-        self.z = np.sin(self.x)
-        self.X, self.Y = np.meshgrid(self.x, self.y)
-        self.Z = np.sin(self.X)
-
-        self.cax = self.matplotlibwidget.axis.imshow(self.Z, cmap='viridis', extent=[0,20,0,6])
-        #self.cax.axes.set_xlim(0,10)
-        self.cax_wave = self.matplotlibwidget.wave_axis.plot(self.x,self.z)
+        self.sampleRate = 200
+        self.freq = 1
+        self.duration = 1
         
-if __name__ == '__main__':
-    app = QApplication(sys.argv)
-    w = MainWidget()
+        self.x = np.linspace(0,self.duration, self.sampleRate * self.duration)
+        self.N = self.sampleRate * self.duration
+        
+        #Set-up array holding pixel data
+        self.imageArray = np.zeros((50,100))
+        
+        self._main = QtWidgets.QWidget()
+        self.setCentralWidget(self._main)
+        layout = QtWidgets.QVBoxLayout(self._main)
+
+        wave_canvas = FigureCanvas(Figure(figsize=(5, 3)))
+        waterfall_canvas = FigureCanvas(Figure(figsize=(5, 3)))
+        
+        
+        
+        
+        layout.addWidget(wave_canvas)
+        layout.addWidget(waterfall_canvas)
+        #layout.addWidget()
+        
+        self._wave_ax = wave_canvas.figure.subplots()
+        self._waterfall_ax = waterfall_canvas.figure.subplots()
+
+        self.gnerateData()
+        
+        self._line = self._waterfall_ax.pcolormesh(np.reshape(self.imageArray,(50,100)),vmin=np.min(self.imageArray),vmax=np.max(self.imageArray), shading='gouraud')
+        self._waterfall_ax.invert_yaxis()
+        self._wave_ax.plot(0,0)
+        self._wave_ax.autoscale(False)
+        
+        self._timer = waterfall_canvas.new_timer(50)
+        self._timer.add_callback(self._update_canvas)
+        self._timer.start()
+
+    def _update_canvas(self):
+        self.gnerateData()
+        self._wave_ax.clear()
+        x,y = self.checkPeaks()
+        
+        self._wave_ax.plot(self.freqArray,self.data)
+        for i in x:
+            self._wave_ax.axvline(x=i, color='r')
+        
+        self._line.set_array(np.reshape(self.imageArray,(50,100)))
+        
+        self._wave_ax.figure.canvas.draw()
+        self._line.figure.canvas.draw()
     
-    w.show()
-    sys.exit(app.exec_())
 
+
+    def gnerateData(self):
+        rng = np.random.default_rng()
+        #print(self.freq)
+        displacement = np.random.rand() * 3
+        self.freqArray = np.fft.rfftfreq(self.N, 1/self.sampleRate)
+        self.signal = 3*np.sin(2*np.pi*self.freq*self.x)
+        self.signal += np.sin(2*np.pi*4*self.x)
+        self.signal += 0.5*np.sin(2*np.pi*7*self.x)
+        
+        self.data = np.fft.rfft(self.signal)
+
+        #self.data - np.fft.fftshift(np.abs(self.data))
+        #print(self.data)
+        
+        self.freq += 0.5
+        self.data = np.abs(self.data)
+        self.data = self.data[:-1]
+        self.freqArray = self.freqArray[:-1]
+        
+        self.imageArray = np.roll(self.imageArray,1,axis=0)
+        self.imageArray[0, :] = self.data
+        
+        
+    def checkPeaks(self):
+        x,y = signal.find_peaks(self.data)
+        print((x,y))
+        return x,y
+        
+
+if __name__ == "__main__":
+    # Check whether there is already a running QApplication (e.g., if running
+    # from an IDE).
+    qapp = QtWidgets.QApplication.instance()
+    if not qapp:
+        qapp = QtWidgets.QApplication(sys.argv)
+
+    app = ApplicationWindow()
+    app.show()
+    app.activateWindow()
+    app.raise_()
+    qapp.exec()
